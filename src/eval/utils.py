@@ -9,6 +9,9 @@ def auto_batch_size(max_batch_size=128, min_batch_size=1):
     Decorator that retries the function with decreasing powers of two as batch size
     on OOM errors. Validates that starting_batch_size is a power of two.
     """
+    # NOTE: SET max_batch_size to 1
+    max_batch_size = 1
+    
     if not ispow2(max_batch_size):
         raise ValueError(f"starting_batch_size must be a power of 2, got {max_batch_size}")
 

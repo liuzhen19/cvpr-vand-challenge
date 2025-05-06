@@ -8,6 +8,7 @@ dependencies = [
     "anomalib[full]",
     "scikit-learn",
     # TODO: Add your additional dependencies here
+    "wget==3.2",
 ]
 
 [tool.uv.sources]
