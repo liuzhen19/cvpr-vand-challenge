@@ -98,7 +98,7 @@ class Model(nn.Module):
     def __init__(self) -> None:
         super().__init__()
 
-        setup_seed(4242)
+        setup_seed(1024)
 
         clip_name = "ViT-L-14-336"
         self.image_size = 224
