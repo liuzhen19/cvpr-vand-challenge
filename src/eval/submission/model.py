@@ -98,7 +98,7 @@ class Model(nn.Module):
     def __init__(self) -> None:
         super().__init__()
 
-        setup_seed(42)
+        setup_seed(4242)
 
         clip_name = "ViT-L-14-336"
         self.image_size = 224
@@ -578,6 +578,11 @@ class Model(nn.Module):
         #     image=image,
         #     pred_score=torch.zeros(batch_size, device=image.device),
         # )
+
+        # force to use batch size 1
+        batch_size = image.shape[0]
+        if batch_size > 1:
+            raise RuntimeError("out of memory")
 
         batch = image.clone().detach()
         # batch = self.just_resize(batch)
