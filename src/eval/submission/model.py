@@ -28,6 +28,7 @@ from kmeans_pytorch import kmeans, kmeans_predict
 from matplotlib import pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
+import hashlib
 
 from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
 import open_clip_local as open_clip
@@ -218,7 +219,8 @@ class Model(nn.Module):
         self.class_name = class_name
 
         print(f"======================================={class_name}=======================================")
-        self.test_idx = 0
+        # self.test_idx = 0
+        self.image_digest = None
         self.k_shot = few_shot_samples.size(0)
         self.process(class_name, few_shot_samples)
         self.few_shot_inited = True
@@ -255,6 +257,9 @@ class Model(nn.Module):
             raise RuntimeError("out of memory")
 
         batch = image.clone().detach()
+        # encode batch to str and md5
+        self.image_digest = hashlib.md5(batch.cpu().numpy().tobytes()).hexdigest()
+
         batch = F.interpolate(batch, size=(448, 448), mode=self.inter_mode, align_corners=self.align_corners)
 
         # 
@@ -342,8 +347,8 @@ class Model(nn.Module):
         mid_features = F.normalize(mid_features, p=2, dim=-1)
              
         # results = self.histogram(batch, mid_features, proj_patch_tokens, self.class_name, os.path.dirname(path).split('/')[-1] + "_" + os.path.basename(path).split('.')[0])
-        self.test_idx += 1
-        results = self.histogram(batch, mid_features, proj_patch_tokens, self.class_name, self.test_idx)
+        # self.test_idx += 1
+        results = self.histogram(batch, mid_features, proj_patch_tokens, self.class_name, test_mode=True)
         
         hist_score = results['score']
 
@@ -404,7 +409,7 @@ class Model(nn.Module):
         return results
 
 
-    def histogram(self, image, cluster_feature, proj_patch_token, class_name, test_idx=None):
+    def histogram(self, image, cluster_feature, proj_patch_token, class_name, test_mode=None):
         def plot_results_only(sorted_anns):
             cur = 1
             img_color = np.zeros((sorted_anns[0]['segmentation'].shape[0], sorted_anns[0]['segmentation'].shape[1]))
@@ -461,11 +466,12 @@ class Model(nn.Module):
         raw_image = to_np_img(image[0])
         height, width = raw_image.shape[:2]
 
-        if test_idx is None:
+        if test_mode is None:
             # for few shot
             masks = self.mask_generator.generate(raw_image)   #         # self.predictor.set_image(raw_image)
         else:
-            mask_filename = os.path.join(self.cache_path, f"{class_name}_{test_idx:04d}.pkl")
+            # mask_filename = os.path.join(self.cache_path, f"{class_name}_{test_idx:04d}.pkl")
+            mask_filename = os.path.join(self.cache_path, f"{class_name}_{self.image_digest}.pkl")
             if os.path.exists(mask_filename):
                 with open(mask_filename, "rb") as f:
                     masks = pickle.load(f)
