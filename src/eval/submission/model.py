@@ -75,7 +75,6 @@ class Model(nn.Module):
         self.model_clip, _, _ = open_clip.create_model_and_transforms('hf-hub:laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K',img_size= 448) #clip model
         self.tokenizer = open_clip.get_tokenizer('hf-hub:laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K') #get tokenizer of clip 
    
-
         model_name = "ViT-L-14-336"
         pretrained = "openai"  # 
 
