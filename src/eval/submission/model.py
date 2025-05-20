@@ -203,6 +203,8 @@ class Model(nn.Module):
         if not os.path.exists(self.cache_path):
             os.makedirs(self.cache_path)
 
+        self.sam_cache = {}
+
 
     def setup(self, setup_data: dict[str, torch.Tensor]) -> None:
         """Setup the model.
@@ -257,7 +259,9 @@ class Model(nn.Module):
 
         batch = image.clone().detach()
         # encode batch to str and md5
-        self.image_digest = hashlib.md5(batch.cpu().numpy().tobytes()).hexdigest()
+        # self.image_digest = hashlib.md5(batch.cpu().numpy().tobytes()).hexdigest()
+        self.image_digest = hashlib.md5(batch[0, 0, 128, :].cpu().numpy().tobytes()).hexdigest()
+
 
         batch = F.interpolate(batch, size=(448, 448), mode=self.inter_mode, align_corners=self.align_corners)
 
@@ -465,19 +469,20 @@ class Model(nn.Module):
         raw_image = to_np_img(image[0])
         height, width = raw_image.shape[:2]
 
-        if test_mode is None:
-            # for few shot
-            masks = self.mask_generator.generate(raw_image)   #         # self.predictor.set_image(raw_image)
-        else:
-            # mask_filename = os.path.join(self.cache_path, f"{class_name}_{test_idx:04d}.pkl")
-            mask_filename = os.path.join(self.cache_path, f"{class_name}_{self.image_digest}.pkl")
-            if os.path.exists(mask_filename):
-                with open(mask_filename, "rb") as f:
-                    masks = pickle.load(f)
-            else:
-                masks = self.mask_generator.generate(raw_image)
-                with open(mask_filename, "wb") as f:
-                    pickle.dump(masks, f)
+        # if test_mode is None:
+        #     # for few shot
+        #     masks = self.mask_generator.generate(raw_image)   #         # self.predictor.set_image(raw_image)
+        # else:
+        #     # mask_filename = os.path.join(self.cache_path, f"{class_name}_{test_idx:04d}.pkl")
+        #     mask_filename = os.path.join(self.cache_path, f"{class_name}_{self.image_digest}.pkl")
+        #     if os.path.exists(mask_filename):
+        #         with open(mask_filename, "rb") as f:
+        #             masks = pickle.load(f)
+        #     else:
+        #         masks = self.mask_generator.generate(raw_image)
+        #         with open(mask_filename, "wb") as f:
+        #             pickle.dump(masks, f)
+        sam_mask, sam_mask_max_area = self.get_sam_masks(raw_image, self.class_name, test_mode=test_mode)
 
         
         kmeans_label = pseudo_labels.view(self.feat_size, self.feat_size).cpu().numpy()
@@ -486,9 +491,7 @@ class Model(nn.Module):
         patch_similarity = (proj_patch_token @ self.patch_query_obj.T)
         patch_mask = patch_similarity.argmax(-1) 
         patch_mask = patch_mask.view(self.feat_size, self.feat_size).cpu().numpy()
-
-        sorted_masks = sorted(masks, key=(lambda x: x['area']), reverse=True)
-        sam_mask = plot_results_only(sorted_masks).astype(np.uint8)  #       
+  
         resized_mask = cv2.resize(kmeans_mask, (width, height), interpolation = cv2.INTER_NEAREST)  #
         merge_sam = merge_segmentations(sam_mask, resized_mask, background_class=self.classes-1)
         resized_patch_mask = cv2.resize(patch_mask, (width, height), interpolation = cv2.INTER_NEAREST)
@@ -560,7 +563,7 @@ class Model(nn.Module):
         
         elif self.class_name == 'splicing_connectors':
             #  object count hist for default
-            sam_mask_max_area = sorted_masks[0]['segmentation'] # background
+            # sam_mask_max_area = sorted_masks[0]['segmentation'] # background
             binary = (sam_mask_max_area == 0).astype(np.uint8) # sam_mask_max_area is background,  background 0 foreground 1
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
             count = 0
@@ -938,3 +941,36 @@ class Model(nn.Module):
     def process(self, class_name: str, few_shot_samples: list[torch.Tensor]):
         few_shot_samples = self.transform(few_shot_samples).to(self.device)
         scores, self.mem_patch_feature_clip_coreset, self.mem_patch_feature_dinov2_coreset = self.process_k_shot(class_name, few_shot_samples)
+
+
+    def get_sam_masks(self, raw_image: np.ndarray, class_name: str, test_mode: int = None) -> list:
+        def plot_results_only(sorted_anns):
+            cur = 1
+            img_color = np.zeros((sorted_anns[0]['segmentation'].shape[0], sorted_anns[0]['segmentation'].shape[1]))
+            for ann in sorted_anns:
+                m = ann['segmentation']
+                img_color[m] = cur
+                cur += 1
+            return img_color
+        
+        def gen_sam_masks(raw_image):
+            masks = self.mask_generator.generate(raw_image)
+            sorted_masks = sorted(masks, key=(lambda x: x['area']), reverse=True)
+            sam_mask = plot_results_only(sorted_masks).astype(int)
+            sam_mask_max_area = sorted_masks[0]['segmentation']
+            return sam_mask, sam_mask_max_area
+
+        if test_mode is None:
+            # for few shot
+            sam_mask, sam_mask_max_area = gen_sam_masks(raw_image)
+            
+        else:
+            mask_key = f"{class_name}_{self.image_digest}"
+            if mask_key in self.sam_cache.keys():
+                sam_mask = self.sam_cache[mask_key]['sam_mask']
+                sam_mask_max_area = self.sam_cache[mask_key]['sam_mask_max_area']
+            else:
+                sam_mask, sam_mask_max_area = gen_sam_masks(raw_image)
+                self.sam_cache[mask_key] = {'sam_mask': sam_mask, 'sam_mask_max_area': sam_mask_max_area}
+        
+        return sam_mask, sam_mask_max_area
