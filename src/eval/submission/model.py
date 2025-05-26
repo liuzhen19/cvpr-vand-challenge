@@ -35,6 +35,16 @@ from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamP
 import open_clip_local as open_clip
 from open_clip_local.pos_embed import get_2d_sincos_pos_embed
 
+
+# --------------------------
+#from utils.tool import detect_slot_anomalies_distance
+from utils.tool import Tool_for_screw_bag
+from utils.tool import Tool_for_splicing_connectors
+from utils.tool import Tool_for_pushpins
+from utils.tool import Tool_for_breakfast_box
+from utils.tool import Tool_for_juice_bottle
+# --------------------------
+
 from accelerate import init_empty_weights
 
 def to_np_img(m):
@@ -65,6 +75,7 @@ class Model(nn.Module):
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self.transform_clip = v2.Compose(
             [
+                # v2.Resize((448, 448)), 
                 v2.Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711)),
             ],
         )
@@ -77,7 +88,9 @@ class Model(nn.Module):
         self.img_size = 448
         self.img_size_BeiT = 384
         # NOTE: Create your model.
-
+       
+        # self.model_clip, _, _ = open_clip.create_model_and_transforms("hf-hub:laion/CLIP-ViT-L-14-DataComp.XYZ",img_size= 448)
+        # self.tokenizer = open_clip.get_tokenizer("hf-hub:laion/CLIP-ViT-L-14-DataComp.XYZ")
         self.model_clip, _, _ = open_clip.create_model_and_transforms('hf-hub:laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K',img_size = self.img_size) #clip model
         self.tokenizer = open_clip.get_tokenizer('hf-hub:laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K') #get tokenizer of clip 
 
@@ -113,16 +126,16 @@ class Model(nn.Module):
 
         self.model_clip.eval()
         self.test_args = None
-        self.align_corners = True # False
-        self.antialias = True # False
+        self.align_corners = True 
+        self.antialias = True 
         self.inter_mode = 'bilinear' # bilinear/bicubic 
         
         self.cluster_feature_id = [0, 1]
 
         self.cluster_num_dict = {
-            "breakfast_box": 3,
-            "juice_bottle": 8,
-            "splicing_connectors": 10,
+            "breakfast_box": 3, 
+            "juice_bottle": 8, 
+            "splicing_connectors": 10, 
             "pushpins": 10, 
             "screw_bag": 10,
         }
@@ -154,9 +167,9 @@ class Model(nn.Module):
         
 
         self.query_threshold_dict = {
-            "breakfast_box": [0., 0., 0., 0., 0., 0., 0.],
-            "juice_bottle": [0., 0., 0.],
-            "splicing_connectors": [0.15, 0.15, 0.15, 0., 0.],
+            "breakfast_box": [0., 0., 0., 0., 0., 0., 0.], 
+            "juice_bottle": [0., 0., 0.], 
+            "splicing_connectors": [0.15, 0.15, 0.15, 0., 0.], 
             "pushpins": [0.2, 0., 0., 0.],
             #"pushpins": [0.1, 0., 0., 0.],
             "screw_bag": [0., 0., 0.,],
@@ -201,16 +214,16 @@ class Model(nn.Module):
         # ------------------------------
 
         current_path = os.path.dirname(__file__)
-        pkl_file = os.path.join(current_path, "memory_bank/statistic_scores_mean.pkl")
+        pkl_file = os.path.join(current_path, "memory_bank526/statistic_scores526_mean.pkl")
         self.stats = pickle.load(open(pkl_file, "rb"))
 
-        image_weights_file = os.path.join(current_path, "memory_bank/image_weights.pkl")
+        image_weights_file = os.path.join(current_path, "memory_bank526/image_weights_new.pkl")
         self.image_weights_stats = pickle.load(open(image_weights_file, "rb"))
 
         self.mem_instance_masks = None
 
         self.anomaly_flag = False
-        self.validation = False #True #False
+        self.validation = False 
 
         self.cache_mode = "ram" # "disk" or "ram"
         self.cache_dir = "./cache"
@@ -228,8 +241,8 @@ class Model(nn.Module):
             self.outputs.append(output[0].detach())
 
         def register_hooks(self):
-            self.clear_hooks()    
-            self.outputs = []      
+            self.clear_hooks()
+            self.outputs = []
             '''
             for i in range(4):
                 block = self.model.swin.encoder.layers[i]
@@ -306,6 +319,7 @@ class Model(nn.Module):
 
         batch = image.clone().detach()
         # encode batch to str and md5
+        # self.image_digest = hashlib.md5(batch.cpu().numpy().tobytes()).hexdigest()
         self.image_digest = hashlib.md5(batch[0, 0, 128, :].cpu().numpy().tobytes()).hexdigest()
         
         self.anomaly_flag = False
@@ -315,7 +329,9 @@ class Model(nn.Module):
 
         batch_resize_BeiT = F.interpolate(batch, size=(self.img_size_BeiT, self.img_size_BeiT), mode=self.inter_mode, align_corners=self.align_corners, antialias=self.antialias)
         batch_resize_BeiT =  self.transform_BeiT(batch_resize_BeiT).to(self.device)
-
+        # batch_resize = F.interpolate(batch, size=(self.img_size, self.img_size), mode=self.inter_mode, align_corners=self.align_corners, antialias=self.antialias)
+        
+        # results = self.forward_one_sample(batch, self.mem_patch_feature_clip_coreset, self.mem_patch_feature_dinov2_coreset, batch_path[0])
         results = self.forward_one_sample((batch_resize, batch_resize_BeiT), self.mem_patch_feature_clip_coreset, self.mem_patch_feature_dinov2_coreset)
 
         structural_score = results['structural_score'][0]
@@ -323,7 +339,6 @@ class Model(nn.Module):
 
         structural_score_raw = results['structural_score']
         text_score = results["text_score"]
-        # text_score = 0
         instance_hungarian_match_score_raw = results['instance_hungarian_match_score']
 
         # anomaly_map_structural = results['anomaly_map_structural']
@@ -339,7 +354,7 @@ class Model(nn.Module):
                 stats = self.stats[self.class_name][self.k_shot][self.few_shot_mean]
             else:
                 current_path = os.path.dirname(__file__)
-                pkl_file1 = os.path.join(current_path, "memory_bank/statistic_scores.pkl")
+                pkl_file1 = os.path.join(current_path, "memory_bank526/statistic_scores526.pkl")
                 self.stats = pickle.load(open(pkl_file1, "rb"))
                 stats = self.stats[self.class_name][self.k_shot]
             standard_pr_sp1_1 = (pr_sp1_1 - stats["pr_sp1_1"]["mean"]) / stats["pr_sp1_1"]["unbiased_std"]
@@ -368,8 +383,12 @@ class Model(nn.Module):
 
         if self.anomaly_flag:
             pred_score = 1.
+            anomaly_rule = True
             self.anomaly_flag = False
+        else:
+            anomaly_rule = False
         
+
         return ImageBatch(
             image=image,
             pred_score=torch.tensor(pred_score).to(image.device),
@@ -413,6 +432,7 @@ class Model(nn.Module):
 
                 bias = torch.ones((U.size(0), U.size(1),1), device=U.device, dtype= torch.float)
                 good_temp = U[:,:,:selected_index].permute(0,2,1)
+                #patch_good_tokens[i] = torch.cat([U[:,:,:selected_index],bias], dim = 2).permute(0,2,1)
                 good_scale_list.append(good_temp)
             good_list.append(good_scale_list)
         return good_list
@@ -440,7 +460,7 @@ class Model(nn.Module):
             patch_tokens = [p[:, 1:, :] for p in patch_tokens]
             patch_tokens = [p.reshape(p.shape[0]*p.shape[1], p.shape[2]) for p in patch_tokens]
 
-            patch_tokens_clip = torch.cat(patch_tokens, dim=-1)  # (1, 1024, 1024x4)
+            patch_tokens_clip = torch.cat(patch_tokens, dim=-1)
             patch_tokens_clip = patch_tokens_clip.view(1, self.ori_feat_size, self.ori_feat_size, -1).permute(0, 3, 1, 2)
             patch_tokens_clip = F.interpolate(patch_tokens_clip, size=(self.feat_size, self.feat_size), mode=self.inter_mode, align_corners=self.align_corners)
 
@@ -458,7 +478,7 @@ class Model(nn.Module):
 
         with torch.no_grad():
             patch_tokens_dinov2 = self.model_dinov2.forward_features(batch, out_layer_list=self.feature_list_dinov2)
-            patch_tokens_dinov2 = torch.cat(patch_tokens_dinov2, dim=-1)  # (1, 1024, 1024x4)
+            patch_tokens_dinov2 = torch.cat(patch_tokens_dinov2, dim=-1)
             patch_tokens_dinov2 = patch_tokens_dinov2.view(1, self.ori_feat_size, self.ori_feat_size, -1).permute(0, 3, 1, 2)
             patch_tokens_dinov2 = F.interpolate(patch_tokens_dinov2, size=(self.feat_size, self.feat_size), mode=self.inter_mode, align_corners=self.align_corners)
 
@@ -468,7 +488,7 @@ class Model(nn.Module):
 
 
             patch_tokens_dinov2 = patch_tokens_dinov2.permute(0, 2, 3, 1).view(-1, self.vision_width_dinov2 * len(self.feature_list_dinov2))
-            patch_tokens_dinov2 = F.normalize(patch_tokens_dinov2, p=2, dim=-1) # (1x64x64, 1024x4)
+            patch_tokens_dinov2 = F.normalize(patch_tokens_dinov2, p=2, dim=-1)
 
         with torch.no_grad():
             self.BeiT_extractor.register_hooks()
@@ -476,7 +496,7 @@ class Model(nn.Module):
             patch_tokens_BeiT = self.BeiT_extractor.get_outputs()
             self.BeiT_extractor.clear_hooks()
             patch_tokens_BeiT = [p[:, 1:, :] for p in patch_tokens_BeiT] 
-            patch_tokens_BeiT = torch.cat(patch_tokens_BeiT, dim=-1)  # (1, 1024, 1024x4)
+            patch_tokens_BeiT = torch.cat(patch_tokens_BeiT, dim=-1)
             patch_tokens_BeiT = patch_tokens_BeiT.view(1, self.img_size_BeiT // 16, self.img_size_BeiT // 16, -1).permute(0, 3, 1, 2)
             patch_tokens_BeiT = F.interpolate(patch_tokens_BeiT, size=(self.img_size_BeiT // 16, self.img_size_BeiT // 16), mode=self.inter_mode, align_corners=self.align_corners)
             patch_tokens_BeiT_test = copy.deepcopy(patch_tokens_BeiT)
@@ -505,8 +525,7 @@ class Model(nn.Module):
         else:
             mid_features = mid_features.view(-1, self.vision_width * len(self.cluster_feature_id))
         mid_features = F.normalize(mid_features, p=2, dim=-1)
-             
-        # self.test_idx += 1
+
         results = self.histogram(batch, mid_features, proj_patch_tokens, self.class_name, test_mode=True)
 
         '''calculate patchcore'''
@@ -514,67 +533,66 @@ class Model(nn.Module):
         anomaly_maps_patchcore_2 = []
         anomaly_maps_patchcore_3 = []
 
-        if self.class_name in ['splicing_connectors', 'pushpins', 'screw_bag','juice_bottle', 'breakfast_box']: # clip feature for patchcore  
-            len_feature_list = len(self.feature_list)
-            for i in range(len(patch_tokens_test)):
-                patch_single_layer = patch_tokens_test[i]
-                patch_single_layer = self.norm_patch(patch_single_layer)
-                B, L, C = patch_single_layer.shape
-                H = int(np.sqrt(L))
-                patch_single_layer = patch_single_layer.permute(0, 2, 1).view(B,-1,H,H)
-                for j in range(len(self.scale_list)):
-                    if self.scale_list[j] != 1:
-                        patch_single_layer_temp =  self.Padding_same(patch_single_layer.clone(),  kernel_size= self.scale_list[j])
-                    else:
-                        patch_single_layer_temp = patch_single_layer.clone()
-                    patch_single_layer_temp = patch_single_layer_temp.view(B,C,-1).permute(0, 2, 1)
-                    W = torch.bmm(patch_single_layer_temp, self.patch_normal_CLIP[i][j].permute(0,2,1))
-                    Q = torch.bmm(W, self.patch_normal_CLIP[i][j])
-                    sim_result =  F.cosine_similarity(patch_single_layer_temp , Q, dim=-1).squeeze().cpu().numpy()
-                    anomaly_maps_patchcore_1.append(1 - (sim_result+1)*0.5)
-        
-        
-        if self.class_name in ['splicing_connectors', 'pushpins', 'screw_bag','juice_bottle', 'breakfast_box']: # dinov2 feature for patchcore
-            len_feature_list = len(self.feature_list_dinov2)
-            for i in range(len(patch_tokens_dinov2_test)):
-                patch_single_layer = patch_tokens_dinov2_test[i]
-                patch_single_layer = self.norm_patch(patch_single_layer)
-                B, L, C = patch_single_layer.shape
-                H = int(np.sqrt(L))
-                patch_single_layer = patch_single_layer.permute(0, 2, 1).view(B,-1,H,H)
-                for j in range(len(self.scale_list)):
-                    if self.scale_list[j] != 1:
-                        patch_single_layer_temp =  self.Padding_same(patch_single_layer.clone(),  kernel_size= self.scale_list[j])
-                    else:
-                        patch_single_layer_temp = patch_single_layer.clone()
-                    patch_single_layer_temp = patch_single_layer_temp.view(B,C,-1).permute(0, 2, 1)
-                    W = torch.bmm(patch_single_layer_temp, self.patch_normal_dinov2[i][j].permute(0,2,1))
-                    Q = torch.bmm(W, self.patch_normal_dinov2[i][j])
-                    sim_result =  F.cosine_similarity(patch_single_layer_temp , Q, dim=-1).squeeze().cpu().numpy()
-                    anomaly_maps_patchcore_2.append(1 - (sim_result+1)*0.5)
 
-        
-        if self.class_name in ['splicing_connectors', 'pushpins', 'screw_bag','juice_bottle', 'breakfast_box']: # dinov2 feature for patchcore
-            len_feature_list = len(self.feature_list_dinov2)
-            for i in range(len(patch_tokens_BeiT_test)):
-                patch_single_layer = patch_tokens_BeiT_test[i]
-                patch_single_layer = self.norm_patch(patch_single_layer)
-                B, L, C = patch_single_layer.shape
-                H = int(np.sqrt(L))
-                patch_single_layer = patch_single_layer.permute(0, 2, 1).view(B,-1,H,H)
-                for j in range(len(self.scale_list)):
-                    if self.scale_list[j] != 1:
-                        patch_single_layer_temp =  self.Padding_same(patch_single_layer.clone(),  kernel_size= self.scale_list[j])
-                    else:
-                        patch_single_layer_temp = patch_single_layer.clone()
-                    patch_single_layer_temp = patch_single_layer_temp.view(B,C,-1).permute(0, 2, 1)
-                    W = torch.bmm(patch_single_layer_temp, self.patch_normal_BeiT[i][j].permute(0,2,1))
-                    Q = torch.bmm(W, self.patch_normal_BeiT[i][j])
-                    sim_result =  F.cosine_similarity(patch_single_layer_temp , Q, dim=-1).squeeze().cpu().numpy()
-                    anomaly_maps_patchcore_3.append(1 - (sim_result+1)*0.5)
+        len_feature_list = len(self.feature_list)
+        for i in range(len(patch_tokens_test)):
+            patch_single_layer = patch_tokens_test[i]
+            patch_single_layer = self.norm_patch(patch_single_layer)
+            B, L, C = patch_single_layer.shape
+            H = int(np.sqrt(L))
+            patch_single_layer = patch_single_layer.permute(0, 2, 1).view(B,-1,H,H)
+            for j in range(len(self.scale_list)):
+                if self.scale_list[j] != 1:
+                    patch_single_layer_temp =  self.Padding_same(patch_single_layer.clone(),  kernel_size= self.scale_list[j])
+                else:
+                    patch_single_layer_temp = patch_single_layer.clone()
+                patch_single_layer_temp = patch_single_layer_temp.view(B,C,-1).permute(0, 2, 1)
+                W = torch.bmm(patch_single_layer_temp, self.patch_normal_CLIP[i][j].permute(0,2,1))
+                Q = torch.bmm(W, self.patch_normal_CLIP[i][j])
+                sim_result =  F.cosine_similarity(patch_single_layer_temp , Q, dim=-1).squeeze().cpu().numpy()
+                anomaly_maps_patchcore_1.append(1 - (sim_result+1)*0.5)
         
 
-        structural_score_1 = np.stack(anomaly_maps_patchcore_1).mean(0).max()     #  
+        len_feature_list = len(self.feature_list_dinov2)
+        for i in range(len(patch_tokens_dinov2_test)):
+            patch_single_layer = patch_tokens_dinov2_test[i]
+            patch_single_layer = self.norm_patch(patch_single_layer)
+            B, L, C = patch_single_layer.shape
+            H = int(np.sqrt(L))
+            patch_single_layer = patch_single_layer.permute(0, 2, 1).view(B,-1,H,H)
+            for j in range(len(self.scale_list)):
+                if self.scale_list[j] != 1:
+                    patch_single_layer_temp =  self.Padding_same(patch_single_layer.clone(),  kernel_size= self.scale_list[j])
+                else:
+                    patch_single_layer_temp = patch_single_layer.clone()
+                patch_single_layer_temp = patch_single_layer_temp.view(B,C,-1).permute(0, 2, 1)
+                W = torch.bmm(patch_single_layer_temp, self.patch_normal_dinov2[i][j].permute(0,2,1))
+                Q = torch.bmm(W, self.patch_normal_dinov2[i][j])
+                sim_result =  F.cosine_similarity(patch_single_layer_temp , Q, dim=-1).squeeze().cpu().numpy()
+                anomaly_maps_patchcore_2.append(1 - (sim_result+1)*0.5)
+
+        
+
+        len_feature_list = len(self.feature_list_dinov2)
+        for i in range(len(patch_tokens_BeiT_test)):
+            patch_single_layer = patch_tokens_BeiT_test[i]
+            patch_single_layer = self.norm_patch(patch_single_layer)
+            B, L, C = patch_single_layer.shape
+            H = int(np.sqrt(L))
+            patch_single_layer = patch_single_layer.permute(0, 2, 1).view(B,-1,H,H)
+            for j in range(len(self.scale_list)):
+                if self.scale_list[j] != 1:
+                    patch_single_layer_temp =  self.Padding_same(patch_single_layer.clone(),  kernel_size= self.scale_list[j])
+                else:
+                    patch_single_layer_temp = patch_single_layer.clone()
+                patch_single_layer_temp = patch_single_layer_temp.view(B,C,-1).permute(0, 2, 1)
+                W = torch.bmm(patch_single_layer_temp, self.patch_normal_BeiT[i][j].permute(0,2,1))
+                Q = torch.bmm(W, self.patch_normal_BeiT[i][j])
+                sim_result =  F.cosine_similarity(patch_single_layer_temp , Q, dim=-1).squeeze().cpu().numpy()
+                anomaly_maps_patchcore_3.append(1 - (sim_result+1)*0.5)
+        
+
+        structural_score_1 = np.stack(anomaly_maps_patchcore_1).mean(0).max()
         structural_score_2 = np.stack(anomaly_maps_patchcore_2).mean(0).max() 
         structural_score_3 = np.stack(anomaly_maps_patchcore_3).mean(0).max() 
 
@@ -586,6 +604,7 @@ class Model(nn.Module):
                 for patch_feature, batch_mem_patch_feature in zip(patch_tokens_clip.chunk(len_feature_list, dim=-1), mem_patch_feature_clip_coreset.chunk(len_feature_list, dim=-1)):
                     instance_features = [patch_feature[mask, :].mean(0, keepdim=True) for mask in instance_masks]
                     if not instance_features:
+                        print("instance_features is empty. Skipping this iteration.")
                         continue
                     instance_features = torch.cat(instance_features, dim=0)
                     instance_features = F.normalize(instance_features, dim=-1)
@@ -593,6 +612,7 @@ class Model(nn.Module):
                     for mem_patch_feature, mem_instance_masks in zip(batch_mem_patch_feature.chunk(self.k_shot), self.mem_instance_masks):
                         mem_instance_features.extend([mem_patch_feature[mask, :].mean(0, keepdim=True) for mask in mem_instance_masks]) 
                     if not mem_instance_features:
+                        print("mem_instance_features is empty. Skipping this iteration.")
                         continue
                     mem_instance_features = torch.cat(mem_instance_features, dim=0)
                     mem_instance_features = F.normalize(mem_instance_features, dim=-1)
@@ -600,7 +620,7 @@ class Model(nn.Module):
                     normal_instance_hungarian = (instance_features @ mem_instance_features.T)
                     cost_matrix = (1 - normal_instance_hungarian).cpu().numpy()
                     
-                    row_ind, col_ind = linear_sum_assignment(cost_matrix) 
+                    row_ind, col_ind = linear_sum_assignment(cost_matrix)
                     cost = cost_matrix[row_ind, col_ind].sum() 
                     cost = cost / min(cost_matrix.shape)
                     anomaly_instances_hungarian.append(cost)
@@ -640,7 +660,7 @@ class Model(nn.Module):
                     count_b = np.bincount(labels_b, minlength=unique_labels_b.max() + 1)
                     label_map[label_a] = np.argmax(count_b)
                 else:
-                    label_map[label_a] = background_class # default background
+                    label_map[label_a] = background_class
 
             merged_a = label_map[a]
             return merged_a
@@ -650,99 +670,9 @@ class Model(nn.Module):
         self.anomaly_flag = False
         instance_masks = []
         if self.class_name == 'pushpins':
-            def split_and_check_foreground(sam_mask_max_area, binary_foreground,  rows=3, cols=5):
-                """
-                Divide the foreground area into a specified number of rows and columns of small grids, and check whether there is a nail in each grid.
-                """
-                if sam_mask_max_area.dtype != bool:
-                    sam_mask_max_area = sam_mask_max_area.astype(bool)
-                y_coords, x_coords = np.where(sam_mask_max_area)
-                if len(x_coords) == 0 or len(y_coords) == 0:
-                    raise ValueError("No valid foreground pixels found in sam_mask_max_area.")
-                
-                min_x, max_x = x_coords.min(), x_coords.max()
-                min_y, max_y = y_coords.min(), y_coords.max()
 
-                width = max_x - min_x + 1
-                cell_width = width // cols
-                height = max_y - min_y + 1
-                cell_height = height // rows
-
-                grid_pixel_counts = []
-                
-                for row in range(rows):
-                    for col in range(cols):
-                        x_start = min_x + col * cell_width
-                        x_end = min_x + (col + 1) * cell_width if col < cols - 1 else max_x + 1
-                        y_start = min_y + row * cell_height
-                        y_end = min_y + (row + 1) * cell_height if row < rows - 1 else max_y + 1
-
-                        cell_mask = binary_foreground[y_start:y_end, x_start:x_end]
-                        
-                        pixel_count = np.sum(cell_mask)
-                        grid_pixel_counts.append(pixel_count)
-
-                return grid_pixel_counts
-
-            img_bgr = cv2.cvtColor(raw_image, cv2.COLOR_RGB2BGR)
-            img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-            hsv_img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-            _ , s_channel, v_channel = cv2.split(hsv_img)
-
-            (low_threshold , high_threshold) = self.pushpins_v_channel_threshold
-            thresh_rooms = cv2.inRange(v_channel, low_threshold, high_threshold)
-            num_lab_r, lab_r ,stats_r ,centroids_r = cv2.connectedComponentsWithStats(thresh_rooms, connectivity=8) #each pushpins room
-            
-            (low_threshold_pin , high_threshold_pin) = self.pushpins_s_channel_threshold
-            thresh_pins = cv2.inRange(s_channel, low_threshold_pin, high_threshold_pin)
-            num_lab_s, lab_s ,stats_s ,centroids_s = cv2.connectedComponentsWithStats(thresh_pins, connectivity=8) #each pushpins
-
-            if not self.few_shot_inited:
-                all_area_r=[]
-                for lab_r in range(1, num_lab_r):
-                    area_r = stats_r[lab_r, cv2.CC_STAT_AREA]
-                    all_area_r.append(area_r)
-                all_area_r_sorted = sorted(all_area_r)
-                avg_area_r = np.mean(all_area_r_sorted[-self.pushpins_count:])
-
-                all_area_s= []
-                for lab_s in range(1, num_lab_s):
-                    area_s = stats_s[lab_s, cv2.CC_STAT_AREA]
-                    all_area_s.append(area_s)
-                all_area_s_sorted = sorted(all_area_s)
-                median_area_s = np.median(all_area_s_sorted)
-
-            if self.few_shot_inited and self.avg_area_r_save != 0 and self.median_area_s_save != 0 and self.anomaly_flag is False:
-                selected_area_r= []
-                for lab_r in range(1, num_lab_r):
-                    area_r = stats_r[lab_r, cv2.CC_STAT_AREA]
-                    ratio1 = area_r / self.avg_area_r_save
-                    if 1.7 <= ratio1 <= 5:
-                        selected_area_r.append(area_r)
-                if len(selected_area_r) >= 1: 
-                    self.anomaly_flag = True 
-                
-                selected_area_s= []
-                for lab_s in range(1, num_lab_s):
-                   area_s = stats_s[lab_s, cv2.CC_STAT_AREA]  
-                   ratio2 = area_s / self.median_area_s_save
-                   if 0.7 <= ratio2 <= 1.3: 
-                      selected_area_s.append(area_s)
-                if len(selected_area_s) != self.pushpins_count: 
-                   self.anomaly_flag = True
-            
-            gray_no_background = img_gray[img_gray != 0]
-            pushpins_min_range_pixel_value = np.percentile(gray_no_background, 15)
-            thresh = cv2.inRange(img_gray, pushpins_min_range_pixel_value, 255)
-            each_foreground_pins_counts = split_and_check_foreground(thresh, thresh_pins, rows=3, cols=5) 
-            
-            if self.few_shot_inited and self.each_foreground_pins_counts != 0 and self.anomaly_flag is False:
-                for i , each_counts in enumerate(each_foreground_pins_counts):
-                    ratio = each_counts / self.each_foreground_pins_counts
-                    if (ratio > 1.6 or ratio < 0.4): 
-                        self.anomaly_flag = True
-                        break
-        
+            flag = Tool_for_pushpins(self, raw_image[:, :, ::-1], angle_thresh=15)
+            avg_area_r, median_area_s, each_foreground_pins_counts = 0, 0, 0
             if not self.few_shot_inited:
                 return  {"avg_area_r": avg_area_r, "median_area_s": median_area_s, "each_foreground_pins_counts": each_foreground_pins_counts}
         
@@ -765,171 +695,8 @@ class Model(nn.Module):
                 if np.sum(temp_mask) <= 32: 
                     patch_merge_sam[temp_mask] = self.patch_query_obj.shape[0]-1 # set to background
 
-            def detect_slot_anomalies_distance(binary_clamps_image, binary_cable_image, image_width):
-                contours, _ = cv2.findContours(binary_clamps_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                left_corners = []
-                right_corners = []
+            instance_masks,binary_connector,binary_clamps,binary_cable, distance, distance_ratio, foreground_pixel_count = Tool_for_splicing_connectors(self, raw_image, sam_mask_max_area, patch_merge_sam, instance_masks, proj_patch_token, test_mode)
 
-                for contour in contours:
-                    area = cv2.contourArea(contour)
-                    if area < 250:
-                        continue
-                    
-                    rect = cv2.minAreaRect(contour)
-                    box = cv2.boxPoints(rect).astype(int)
-                    cx = np.mean(box[:, 0])
-                    
-                    if cx < image_width / 2:
-                        top_right = max(box, key=lambda p: p[0] - p[1])
-                        left_corners.append((tuple(top_right), area))
-                    else:
-                        top_left = min(box, key=lambda p: p[0] + p[1])
-                        right_corners.append((tuple(top_left), area))
-
-                if not left_corners or not right_corners:
-                    return -1, -1, -1
-
-                left_corners.sort(key=lambda x: x[1], reverse=True)
-                right_corners.sort(key=lambda x: x[1], reverse=True)
-                left_corner = left_corners[0][0]
-                right_corner = right_corners[0][0]
-
-                kernel = np.ones((3, 3), np.uint8)
-                opened = cv2.morphologyEx(binary_cable_image, cv2.MORPH_OPEN, kernel, iterations=2)
-                closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-                contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                if not contours:
-                    return -1, -1, -1
-
-                cable_contour = max(contours, key=cv2.contourArea)
-                cable_points = cable_contour[:, 0, :]
-
-                left_end_idx = np.argmin(cable_points[:, 0])
-                right_end_idx = np.argmax(cable_points[:, 0])
-                left_end = tuple(cable_points[left_end_idx])
-                right_end = tuple(cable_points[right_end_idx])
-
-                if abs(left_end[0] - left_corner[0]) > image_width / 4 or abs(right_end[0] - right_corner[0]) > image_width / 4:
-                    return -1, -1, -1
-
-                left_y_distance = abs(left_end[1] - left_corner[1])
-                right_y_distance = abs(right_end[1] - right_corner[1])
-
-                if right_y_distance == 0:
-                    return -1, left_y_distance, right_y_distance
-
-                distance_ratio = left_y_distance / right_y_distance
-
-                return distance_ratio, left_y_distance, right_y_distance
-        
-            #  object count hist for default
-            binary = (sam_mask_max_area == 0).astype(np.uint8) 
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
-            count = 0
-            for i in range(1, num_labels):
-                temp_mask = labels == i
-                if np.sum(temp_mask) <= 64: 
-                    binary[temp_mask] = 0 
-                else:
-                    count += 1
-            if count != 1 and self.anomaly_flag is False: 
-                self.anomaly_flag = True
-
-            patch_merge_sam[~(binary.astype(np.bool_))] = self.patch_query_obj.shape[0] - 1 # remove patch noise
-
-            # erode the cable and divide into left and right parts
-            kernel = np.ones((23, 23), dtype=np.uint8)
-            erode_binary = cv2.erode(binary, kernel)
-            h, w = erode_binary.shape
-            distance = 0
-
-            left, right = erode_binary[:, :int(w/2)],  erode_binary[:, int(w/2):]   
-            left_count = np.bincount(left.reshape(-1), minlength=self.classes)[1]  # foreground
-            right_count = np.bincount(right.reshape(-1), minlength=self.classes)[1] # foreground
-
-            binary_cable = (patch_merge_sam == 1).astype(np.uint8)
-            binary_cable_orinal = binary_cable.copy()
-            
-            kernel = np.ones((5, 5), dtype=np.uint8)
-            binary_cable = cv2.erode(binary_cable, kernel)
-            kernel1 = np.ones((5, 5),  dtype=np.uint8)
-            binary_cable1 = cv2.erode(binary_cable, kernel1)
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_cable, connectivity=8)
-            for i in range(1, num_labels):
-                temp_mask = labels == i
-                if np.sum(temp_mask) <= 64:
-                    binary_cable[temp_mask] = 0 # set to background
-
-            binary_cable = cv2.resize(binary_cable, (self.feat_size, self.feat_size), interpolation = cv2.INTER_NEAREST)
-            
-            binary_clamps = (patch_merge_sam == 0).astype(np.uint8)
-            binary_clamps_orinal = binary_clamps.copy()
-
-            kernel = np.ones((5, 5), dtype=np.uint8)
-            binary_clamps = cv2.erode(binary_clamps, kernel)
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_clamps, connectivity=8)
-            for i in range(1, num_labels):
-                temp_mask = labels == i
-                if np.sum(temp_mask) <= 64:
-                    binary_clamps[temp_mask] = 0 # set to background
-                else:
-                    instance_mask = temp_mask.astype(np.uint8)
-                    instance_mask = cv2.resize(instance_mask, (self.feat_size, self.feat_size), interpolation = cv2.INTER_NEAREST)
-                    if instance_mask.any():
-                        instance_masks.append(instance_mask.astype(np.bool_).reshape(-1))
-
-            binary_clamps = cv2.resize(binary_clamps, (self.feat_size, self.feat_size), interpolation = cv2.INTER_NEAREST)
-
-            binary_connector = cv2.resize(binary, (self.feat_size, self.feat_size), interpolation = cv2.INTER_NEAREST)
-            
-            query_cable_color = encode_obj_text(self.model_clip, self.splicing_connectors_cable_color_query_words_dict, self.tokenizer, self.device)
-            cable_feature = proj_patch_token[binary_cable.astype(np.bool_).reshape(-1), :].mean(0, keepdim=True)
-            idx_color = (cable_feature @ query_cable_color.T).argmax(-1).squeeze(0).item()
-            foreground_pixel_count = np.sum(erode_binary) / self.splicing_connectors_count[idx_color]
-
-            #the middle of cabel
-            slice_cable = binary_cable1[:, int(w/2)-5: int(w/2)+5]
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(slice_cable, connectivity=8)
-            cable_count = num_labels - 1
-            if cable_count != 1 and self.anomaly_flag is False: # two cables
-                self.anomaly_flag = True
-
-            # {2-clamp: yellow  3-clamp: blue  5-clamp: red}    cable color and clamp number mismatch
-            if self.few_shot_inited and self.foreground_pixel_hist != 0 and self.anomaly_flag is False:
-                ratio = foreground_pixel_count / self.foreground_pixel_hist
-                if (ratio > 1.2 or ratio < 0.8) and self.anomaly_flag is False:    # color and number mismatch
-                    self.anomaly_flag = True
-
-            # left right hist for symmetry
-            ratio = np.sum(left_count) / (np.sum(right_count) + 1e-5)
-            if self.few_shot_inited and (ratio > 1.2 or ratio < 0.8) and self.anomaly_flag is False: # left right asymmetry in clamp
-                self.anomaly_flag = True
-                
-
-            # left and right centroids distance
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(erode_binary, connectivity=8)
-            if num_labels - 1 == 2:
-                centroids = centroids[1:]
-                x1, y1 = centroids[0] 
-                x2, y2 = centroids[1]
-                distance = np.sqrt((x1/w - x2/w)**2 + (y1/h - y2/h)**2)
-                if self.few_shot_inited and self.splicing_connectors_distance != 0 and self.anomaly_flag is False:
-                    ratio = distance / self.splicing_connectors_distance
-                    if ratio < 0.6 or ratio > 1.4:  
-                        self.anomaly_flag = True
-
-
-            if not self.few_shot_inited:
-                distance_ratio, _, _= detect_slot_anomalies_distance(binary_clamps_orinal, binary_cable_orinal, w)
-
-            if self.few_shot_inited and self.distance_ratio_save != 0 and  self.anomaly_flag is False:
-                distance_ratio, _, _ = detect_slot_anomalies_distance(binary_clamps_orinal, binary_cable_orinal, w)
-                if distance_ratio != -1:
-                    if 0.1 < distance_ratio < 0.4 or distance_ratio > 1.28:
-                        self.anomaly_flag = True
-                                 
-            # todo    mismatch cable link  
             binary_foreground = binary.astype(np.uint8)
             if binary_connector.any():
                 instance_masks.append(binary_connector.astype(np.bool_).reshape(-1))
@@ -939,7 +706,7 @@ class Model(nn.Module):
                 instance_masks.append(binary_cable.astype(np.bool_).reshape(-1))      
 
             if len(instance_masks) != 0:
-                instance_masks = np.stack(instance_masks) #[N, 64x64]
+                instance_masks = np.stack(instance_masks)
 
             if not self.few_shot_inited:
                 return {"distance": distance, "instance_masks": instance_masks, "foreground_pixel_count": foreground_pixel_count,  "distance_ratio":distance_ratio}
@@ -948,7 +715,7 @@ class Model(nn.Module):
            
         elif self.class_name == 'screw_bag':
             pseudo_labels = kmeans_predict(cluster_feature, self.cluster_centers, 'euclidean', device=self.device)
-            kmeans_mask = torch.ones_like(pseudo_labels) * (self.classes - 1)    # default to background
+            kmeans_mask = torch.ones_like(pseudo_labels) * (self.classes - 1)
             
             for pl in pseudo_labels.unique():
                 mask = (pseudo_labels == pl).reshape(-1)
@@ -981,72 +748,28 @@ class Model(nn.Module):
             patch_merge_sam = merge_segmentations(sam_mask, resized_patch_mask, background_class=self.patch_query_obj.shape[0]-1)
             
             # filter small region for patch merge sam
-            binary = (patch_merge_sam != (self.patch_query_obj.shape[0]-1) ).astype(np.uint8)  # foreground 1  background 0
+            binary = (patch_merge_sam != (self.patch_query_obj.shape[0]-1) ).astype(np.uint8)
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
             for i in range(1, num_labels):
                 temp_mask = labels == i
-                if np.sum(temp_mask) <= 32: # 448x448
-                    patch_merge_sam[temp_mask] = self.patch_query_obj.shape[0]-1 # set to background
+                if np.sum(temp_mask) <= 32:
+                    patch_merge_sam[temp_mask] = self.patch_query_obj.shape[0]-1 
             
             # pixel hist of kmeans mask
             foreground_pixel_count = np.sum(np.bincount(kmeans_mask.reshape(-1))[:len(self.foreground_label_idx[self.class_name])])  # foreground pixel
             if self.few_shot_inited and self.foreground_pixel_hist != 0 and self.anomaly_flag is False:
                 ratio = foreground_pixel_count / self.foreground_pixel_hist
-                # todo: optimize
-                if ratio < 0.96 or ratio > 1.06:  #if ratio < 0.94 or ratio > 1.06
+                if ratio < 0.96 or ratio > 1.06:
                     self.anomaly_flag = True
             
-            img_bgr = cv2.cvtColor(raw_image, cv2.COLOR_RGB2BGR)
-            color =cv2.resize(img_bgr, self.screw_bag_cicrle_image_shape, interpolation=cv2.INTER_CUBIC)
-            gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
-            if self.few_shot_inited and self.anomaly_flag is False:
-                circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1, minDist=25, param1=150, param2=18, minRadius=self.screw_bag_circle_radius[0], maxRadius=self.screw_bag_circle_radius[1])
-                if circles is not None :
-                    circles = np.uint16(np.around(circles))
-                    if(circles.shape[1] != self.screw_bag_circle_count):
-                        self.anomaly_flag = True
-            
-            thresh = cv2.inRange(gray, 19, 255)
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thresh, connectivity=8)
-            selected_mask = np.zeros_like(thresh, dtype=np.uint8)
-            areas = stats[1:, cv2.CC_STAT_AREA]
-            max_area_index = np.argmax(areas) + 1
-            selected_mask[labels == max_area_index] = 255 
-            contours, _ = cv2.findContours(selected_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if len(contours) != 0:    
-                Area_s = cv2.countNonZero(selected_mask) 
-                filled_mask = selected_mask.copy()
-                contours, hierarchy = cv2.findContours(filled_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-                for i, cnt in enumerate(contours):
-                    if hierarchy[0][i][3] != -1 and hierarchy[0][i][2] == -1:
-                        cv2.drawContours(filled_mask, [cnt], 0, 255, -1)   
-                Area_f = cv2.countNonZero(filled_mask) 
-                if self.few_shot_inited and self.anomaly_flag is False:
-                    if (Area_f - Area_s) > 150:
-                        self.anomaly_flag = True
-                    
-                contours_filled = cv2.findContours(filled_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
-                max_contour_filled = max(contours_filled, key=cv2.contourArea)
-                Area_c = cv2.contourArea(max_contour_filled)
-                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
-                closed_mask = cv2.morphologyEx(filled_mask, cv2.MORPH_CLOSE, kernel)
-                contours_closed = cv2.findContours(closed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
-                max_contour_closed = max(contours_closed, key=cv2.contourArea)
-                Area_ss = cv2.contourArea(max_contour_closed)
-                if not self.few_shot_inited:
-                    area_difference_ss_c = Area_ss - Area_c
-                if self.few_shot_inited and self.area_difference_ss_c_save != 0 and self.anomaly_flag is False:
-                    ratio2 = (Area_ss - Area_c) / self.area_difference_ss_c_save
-                    if ratio2 > 1.5:
-                        self.anomaly_flag = True
+            flag,  area_difference_ss_c = Tool_for_screw_bag(self, raw_image)
             
             # patch hist
             binary_screw = np.isin(kmeans_mask, self.foreground_label_idx[self.class_name])
 
             resized_binary_screw = cv2.resize(binary_screw.astype(np.uint8), (patch_merge_sam.shape[1], patch_merge_sam.shape[0]), interpolation = cv2.INTER_NEAREST)
-            patch_merge_sam[~(resized_binary_screw.astype(np.bool_))] = self.patch_query_obj.shape[0] - 1 # remove patch noise
+            patch_merge_sam[~(resized_binary_screw.astype(np.bool_))] = self.patch_query_obj.shape[0] - 1
 
-            # # todo: count of screw, nut and washer, screw of different length
             binary_foreground = (patch_merge_sam != (self.patch_query_obj.shape[0] - 1)).astype(np.uint8)
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_foreground, connectivity=8)
             for i in range(1, num_labels):
@@ -1056,7 +779,7 @@ class Model(nn.Module):
                     instance_masks.append(instance_mask.astype(np.bool_).reshape(-1))
             
             if len(instance_masks) != 0:
-                instance_masks = np.stack(instance_masks) #[N, 64x64]
+                instance_masks = np.stack(instance_masks)
             
             if not self.few_shot_inited:
                 return {"foreground_pixel_count": foreground_pixel_count,"instance_masks": instance_masks, "area_difference_ss_c": area_difference_ss_c}
@@ -1073,6 +796,8 @@ class Model(nn.Module):
             resized_patch_mask = cv2.resize(patch_mask, (width, height), interpolation = cv2.INTER_NEAREST)
             patch_merge_sam = merge_segmentations(sam_mask, resized_patch_mask, background_class=self.patch_query_obj.shape[0]-1)
 
+            Tool_for_breakfast_box(self, raw_image, patch_merge_sam)
+
             # filter small region for patch merge sam
             binary = (patch_merge_sam != (self.patch_query_obj.shape[0]-1) ).astype(np.uint8)  # foreground 1  background 0
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
@@ -1081,7 +806,6 @@ class Model(nn.Module):
                 if np.sum(temp_mask) <= 32: # 448x448
                     patch_merge_sam[temp_mask] = self.patch_query_obj.shape[0]-1 # set to background
 
-            # todo: exist of foreground
             binary_foreground = (patch_merge_sam != (self.patch_query_obj.shape[0] - 1)).astype(np.uint8) 
 
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_foreground, connectivity=8)
@@ -1107,6 +831,11 @@ class Model(nn.Module):
             resized_patch_mask = cv2.resize(patch_mask, (width, height), interpolation = cv2.INTER_NEAREST)
             patch_merge_sam = merge_segmentations(sam_mask, resized_patch_mask, background_class=self.patch_query_obj.shape[0]-1)
 
+            anomaly_flag = Tool_for_juice_bottle(raw_image, patch_merge_sam)
+            if anomaly_flag and test_mode:
+                self.anomaly_flag = True
+                return {"instance_masks": instance_masks}
+
             # filter small region for patch merge sam
             binary = (patch_merge_sam != (self.patch_query_obj.shape[0]-1) ).astype(np.uint8)  # foreground 1  background 0
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
@@ -1115,7 +844,7 @@ class Model(nn.Module):
                 if np.sum(temp_mask) <= 32: # 448x448
                     patch_merge_sam[temp_mask] = self.patch_query_obj.shape[0]-1 # set to background
             
-            patch_merge_sam[sam_mask == 0] = self.patch_query_obj.shape[0] - 1  # 79.5
+            patch_merge_sam[sam_mask == 0] = self.patch_query_obj.shape[0] - 1
 
             resized_patch_merge_sam = cv2.resize(patch_merge_sam, (self.feat_size, self.feat_size), interpolation = cv2.INTER_NEAREST)
             binary_liquid = (resized_patch_merge_sam == 1)
@@ -1269,21 +998,15 @@ class Model(nn.Module):
             elif self.class_name == 'juice_bottle':
                 mem_instance_masks.append(results['instance_masks'])
 
-        
-        # pushpins
+
         if len(avg_area_r_save) != 0:
             self.avg_area_r_save = np.mean(avg_area_r_save)
         if len(median_area_s_save) != 0:
             self.median_area_s_save = np.mean(median_area_s_save)
-        if len(each_foreground_pins_counts) != 0:
-            flattened_foreground_pixel_hist = np.concatenate(each_foreground_pins_counts)
-            self.each_foreground_pins_counts = np.mean(flattened_foreground_pixel_hist)
 
-        # splicing_connectors
         if len(distance_ratio_save) != 0:
             self.distance_ratio_save = np.mean(distance_ratio_save) 
 
-        # screw_bag
         if len(area_difference_ss_c_save) != 0:
             self.area_difference_ss_c_save = np.mean(area_difference_ss_c_save) 
 
@@ -1300,8 +1023,7 @@ class Model(nn.Module):
 
         return mem_patch_feature_clip_coreset, mem_patch_feature_dinov2_coreset
 
-    
-    # def process(self, class_name: str, few_shot_samples: list[torch.Tensor], few_shot_paths: list[str]):
+
     def process(self, class_name: str, few_shot_samples: list[torch.Tensor]):
         few_shot_samples_resize = F.interpolate(few_shot_samples, size=(self.img_size, self.img_size), mode=self.inter_mode, align_corners=self.align_corners, antialias=self.antialias)
         few_shot_samples_resize = self.transform_clip(few_shot_samples_resize).to(self.device)
@@ -1310,19 +1032,15 @@ class Model(nn.Module):
         few_shot_samples_resize_BeiT = self.transform_BeiT(few_shot_samples_resize_BeiT).to(self.device)
 
         self.few_shot_mean = few_shot_samples.mean().item()
-        
+
         if class_name in self.image_weights_stats and self.k_shot in self.image_weights_stats[class_name]:
-            if self.few_shot_mean in self.image_weights_stats[class_name][self.k_shot]:
-                self.weights = self.image_weights_stats[class_name][self.k_shot][self.few_shot_mean]
-            else:
-                available_means = list(self.image_weights_stats[class_name][self.k_shot].keys())
-                closest_mean = min(available_means, key=lambda x: abs(x - self.few_shot_mean))
-                self.weights = self.image_weights_stats[class_name][self.k_shot][closest_mean]
+            available_means = list(self.image_weights_stats[class_name][self.k_shot].keys())
+            closest_mean = min(available_means, key=lambda x: abs(x - self.few_shot_mean))
+            self.weights = self.image_weights_stats[class_name][self.k_shot][closest_mean]
         else:
             self.weights = None
-        
-        self.mem_patch_feature_clip_coreset, self.mem_patch_feature_dinov2_coreset = self.process_k_shot(class_name, (few_shot_samples_resize,few_shot_samples_resize_BeiT))
 
+        self.mem_patch_feature_clip_coreset, self.mem_patch_feature_dinov2_coreset = self.process_k_shot(class_name, (few_shot_samples_resize,few_shot_samples_resize_BeiT))
 
     def get_sam_masks(self, raw_image: np.ndarray, class_name: str, test_mode: int = None) -> list:
         def plot_results_only(sorted_anns):
@@ -1342,7 +1060,6 @@ class Model(nn.Module):
             return sam_mask, sam_mask_max_area
 
         if test_mode is None:
-            # for few shot
             sam_mask, sam_mask_max_area = gen_sam_masks(raw_image)
             
         else:
