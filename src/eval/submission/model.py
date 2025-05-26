@@ -212,7 +212,7 @@ class Model(nn.Module):
         self.anomaly_flag = False
         self.validation = False #True #False
 
-        self.cache_mode = "disk" # "disk" or "ram"
+        self.cache_mode = "ram" # "disk" or "ram"
         self.cache_dir = "./cache"
         os.makedirs(self.cache_dir, exist_ok=True)
         self.sam_cache = {}
