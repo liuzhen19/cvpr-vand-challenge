@@ -194,7 +194,17 @@ class Model(nn.Module):
 
         # -------------------------------
         from transformers import BeitFeatureExtractor, BeitForImageClassification
-        self.model_BeiT = BeitForImageClassification.from_pretrained('microsoft/beit-large-patch16-384')
+        # self.model_BeiT = BeitForImageClassification.from_pretrained('microsoft/beit-large-patch16-384')
+        # local_model_path = snapshot_download(
+        #     repo_id='microsoft/beit-large-patch16-384',
+        #     cache_dir=os.path.join(self.checkpoint, "cache"),
+        # )
+        # self.model_BeiT = BeitForImageClassification.from_pretrained(local_model_path)
+        self.model_BeiT = BeitForImageClassification.from_pretrained('microsoft/beit-large-patch16-384', 
+                                                                     cache_dir=os.path.join(self.checkpoint, "cache")
+                                                                    )
+
+
         self.model_BeiT.eval().to(self.device)
         
         self.BeiT_extractor = self.BeitIntermediateFeatureExtractor(self.model_BeiT, target_layers=[5, 11, 17, 23])
