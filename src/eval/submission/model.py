@@ -42,6 +42,7 @@ from utils.tool import Tool_for_splicing_connectors
 from utils.tool import Tool_for_pushpins
 from utils.tool import Tool_for_breakfast_box
 from utils.tool import Tool_for_juice_bottle
+from utils.VPB import Context_Prompting
 # --------------------------
 
 from accelerate import init_empty_weights
@@ -82,6 +83,14 @@ class Model(nn.Module):
         self.transform_BeiT = v2.Compose([
             v2.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)), 
         ])
+
+        # ------------------------------------ add---------------
+        self.New_Lan_Embed = Context_Prompting().to(self.device)
+        self.New_Lan_Embed.eval()
+        cur_path = os.path.dirname(__file__)
+        checkpoint = torch.load(os.path.join(cur_path, "text_optimization.pth"), map_location= self.device)
+        self.New_Lan_Embed.load_state_dict(checkpoint["New_Lan_Embed"], strict= True)
+        # ------------------------------------ add---------------
 
 
         self.img_size = 448
@@ -224,7 +233,7 @@ class Model(nn.Module):
         self.anomaly_flag = False
         self.validation = False 
 
-        self.cache_mode = "ram" # "disk" or "ram"
+        self.cache_mode = "disk" # "disk" or "ram"
         self.cache_dir = "./cache"
         os.makedirs(self.cache_dir, exist_ok=True)
         self.sam_cache = {}
@@ -338,6 +347,9 @@ class Model(nn.Module):
 
         structural_score_raw = results['structural_score']
         text_score = results["text_score"]
+
+        text_score_op = results["text_score_op"]
+
         instance_hungarian_match_score_raw = results['instance_hungarian_match_score']
 
         # anomaly_map_structural = results['anomaly_map_structural']
@@ -360,6 +372,7 @@ class Model(nn.Module):
             standard_pr_sp1_2 = (pr_sp1_2 - stats["pr_sp1_2"]["mean"]) / stats["pr_sp1_2"]["unbiased_std"]
             standard_pr_sp1_3 = (pr_sp1_3 - stats["pr_sp1_3"]["mean"]) / stats["pr_sp1_3"]["unbiased_std"]
             standard_text_scores = (text_scores - stats["text_scores"]["mean"]) / stats["text_scores"]["unbiased_std"]
+            standard_text_scores_op = (text_score_op - (-2.7743252e-07)) / 0.9999999
             if self.class_name == 'pushpins':
                 standard_pr_sp2 = 0
             else:
@@ -369,11 +382,14 @@ class Model(nn.Module):
             alpha_stu_weights = self.weights["alpha_stu_weights"]
             alpha_sp = self.weights["alpha_sp"]
             alpha_text = self.weights["alpha_text"]
-            
+            if self.class_name == "breakfast_box":
+                alpha_text_op = 0.9
+            else:
+                alpha_text_op = 0.0
             structural_score = alpha_stu_weights[0] * standard_pr_sp1_1 + alpha_stu_weights[1] * standard_pr_sp1_2 + alpha_stu_weights[2] * standard_pr_sp1_3
 
             pr_sp = np.max(np.stack([structural_score, alpha_sp * standard_pr_sp2], axis=0), axis=0)
-            pr_sp = sigmoid(pr_sp + alpha_text * standard_text_scores)
+            pr_sp = sigmoid(pr_sp + alpha_text * standard_text_scores + alpha_text_op * standard_text_scores_op)
         else:
             pr_sp = np.max(np.stack([standard_pr_sp1_2  , standard_pr_sp2], axis=0), axis=0)
             pr_sp = sigmoid(pr_sp)
@@ -470,9 +486,18 @@ class Model(nn.Module):
             patch_tokens_clip = patch_tokens_clip.permute(0, 2, 3, 1).view(-1, self.vision_width * len(self.feature_list))
             patch_tokens_clip = F.normalize(patch_tokens_clip, p=2, dim=-1) 
 
+            image_features_clone = image_features.clone()
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)
             text_probs = (100.0 * image_features @ self.text_embedding).softmax(dim=-1)
             pr = text_probs[0][1].cpu().item()
+
+
+            # ------------------------------- add-----------------------
+            pro_img  = self.New_Lan_Embed(self.text_embedding.unsqueeze(0), image_features_clone, patch_tokens_test).squeeze(2)
+            pro_img = pro_img.softmax(dim = -1)
+            # print(pro_img)
+            pr_ft = pro_img[0][1].cpu().item()
+            # ------------------------------- add-----------------------
             
 
         with torch.no_grad():
@@ -628,7 +653,7 @@ class Model(nn.Module):
         else:
             instance_hungarian_match_score = 0  
            
-        results = {"text_score": pr, 'structural_score': (structural_score_1, structural_score_2, structural_score_3),  'instance_hungarian_match_score': instance_hungarian_match_score}
+        results = {"text_score": pr,"text_score_op": pr_ft, 'structural_score': (structural_score_1, structural_score_2, structural_score_3),  'instance_hungarian_match_score': instance_hungarian_match_score}
 
         return results
 
