@@ -408,7 +408,6 @@ class Model(nn.Module):
             image=image,
             pred_score=torch.tensor(pred_score).to(image.device),
         )
-
     
     from prompt_ensemble import encode_text_with_prompt_ensemble
     def compute_text_embeddings(self, model, objs, tokenizer, device):
