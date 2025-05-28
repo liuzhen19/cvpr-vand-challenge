@@ -2,31 +2,6 @@ import cv2
 import numpy as np
 from prompt_ensemble import encode_text_with_prompt_ensemble, encode_normal_text, encode_abnormal_text, encode_general_text, encode_obj_text
 
-def fill_holes(binary_img):
-    """
-    填充二值图中的空洞
-    参数:
-        binary_img: 输入的二值图像，uint8类型，前景为255，背景为0
-    返回:
-        filled_img: 空洞填充后的图像
-    """
-    # 拷贝图像作为掩膜使用（floodFill需要比原图大2）
-    h, w = binary_img.shape
-    floodfill_mask = np.zeros((h + 2, w + 2), np.uint8)
-
-    # 复制原图，用于填充操作
-    im_floodfill = binary_img.copy()
-
-    # 在边缘某点进行flood fill（假设边缘是背景）
-    cv2.floodFill(im_floodfill, floodfill_mask, (0, 0), 255)
-
-    # 对填充结果取反，得到原图中的空洞
-    im_floodfill_inv = cv2.bitwise_not(im_floodfill)
-
-    # 原图 + 空洞 = 填充空洞后的图
-    filled_img = binary_img | im_floodfill_inv
-
-    return filled_img
 
 def detect_slot_anomalies_distance(binary_clamps_image, binary_cable_image, image_width):
     contours, _ = cv2.findContours(binary_clamps_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)

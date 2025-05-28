@@ -233,7 +233,7 @@ class Model(nn.Module):
         self.anomaly_flag = False
         self.validation = False 
 
-        self.cache_mode = "disk" # "disk" or "ram"
+        self.cache_mode = "ram" # "disk" or "ram"
         self.cache_dir = "./cache"
         os.makedirs(self.cache_dir, exist_ok=True)
         self.sam_cache = {}
@@ -372,7 +372,7 @@ class Model(nn.Module):
             standard_pr_sp1_2 = (pr_sp1_2 - stats["pr_sp1_2"]["mean"]) / stats["pr_sp1_2"]["unbiased_std"]
             standard_pr_sp1_3 = (pr_sp1_3 - stats["pr_sp1_3"]["mean"]) / stats["pr_sp1_3"]["unbiased_std"]
             standard_text_scores = (text_scores - stats["text_scores"]["mean"]) / stats["text_scores"]["unbiased_std"]
-            standard_text_scores_op = (text_score_op - (-2.7743252e-07)) / 0.9999999
+            standard_text_scores_op = (text_score_op - (0.5702928)) / 0.23950076
             if self.class_name == 'pushpins':
                 standard_pr_sp2 = 0
             else:
